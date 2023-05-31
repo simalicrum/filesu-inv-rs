@@ -4,12 +4,11 @@ use quick_xml::events::BytesStart;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use quick_xml::Writer;
-use serde;
-use serde::Deserializer;
+use serde::{Deserialize, Serialize};
+use serde_xml_rs::{from_str, to_string};
+use std::error::Error;
 use std::io::BufRead;
 use url::Url;
-
-use std::error::Error;
 
 async fn list_blobs(
     container: &str,
@@ -63,6 +62,33 @@ fn read_to_end_into_buffer<R: BufRead>(
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+struct Properties {
+    #[serde(rename = "Creation-Time")]
+    creation_time: String,
+    #[serde(rename = "Last-Modified")]
+    last_modified: String,
+    #[serde(rename = "Content-Length")]
+    content_length: String,
+    #[serde(rename = "Content-Type")]
+    content_type: String,
+    #[serde(rename = "Content-MD5")]
+    content_md5: String,
+    #[serde(rename = "BlobType")]
+    blobtype: String,
+    #[serde(rename = "AccessTier")]
+    accesstier: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+struct Blob {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "Properties")]
+    properties: Properties,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let credential = DefaultAzureCredential::default();
@@ -81,13 +107,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => match e.name().as_ref() {
-                b"Name" => {
+                b"Blob" => {
                     let release_bytes =
                         read_to_end_into_buffer(&mut reader, &e, &mut junk_buf).unwrap();
                     let str = std::str::from_utf8(&release_bytes).unwrap();
-                    let mut deserializer = Deserializer::from_str(str);
-                    let release = Release::deserialize(&mut deserializer).unwrap();
-                    println!("{}", str);
+                    let blob: Blob = from_str(str).unwrap();
+                    println!("{:?}", blob);
                 }
                 _ => (),
             },
@@ -97,6 +122,5 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         buf.clear();
     }
-    // println!("{:?}", txt);
     Ok(())
 }
