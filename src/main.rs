@@ -4,25 +4,37 @@ use url::Url;
 
 use std::error::Error;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    let credential = DefaultAzureCredential::default();
-    let response = credential.get_token("https://storage.azure.com/").await?;
+async fn list_blobs(
+    container: &str,
+    account: &str,
+    token: &str,
+    client: &reqwest::Client,
+) -> Result<String, Box<dyn Error>> {
     let url = Url::parse(&format!(
-        "https://bccrcprccatlassa.blob.core.windows.net/atlas?restype=container&comp=list"
+        "https://{}.blob.core.windows.net/{}?restype=container&comp=list",
+        account, container,
     ))?;
-    let response = reqwest::Client::new()
+    let res = client
         .get(url)
-        .header(
-            "Authorization",
-            format!("Bearer {}", response.token.secret()),
-        )
+        .header("Authorization", format!("Bearer {}", token))
         .header("x-ms-version", "2020-04-08")
         .send()
         .await?
         .text()
         .await?;
+    Ok(res)
+}
 
-    println!("{:?}", response);
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let credential = DefaultAzureCredential::default();
+    let token_res = credential.get_token("https://storage.azure.com/").await?;
+    let token = token_res.token.secret();
+    let client = reqwest::Client::new();
+    let container = "atlas";
+    let account = "bccrcprccatlassa";
+    let res = list_blobs(container, account, token, &client).await?;
+
+    println!("{:?}", res);
     Ok(())
 }
