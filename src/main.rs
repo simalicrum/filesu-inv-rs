@@ -2,23 +2,22 @@ use azure_core::auth::TokenCredential;
 use azure_identity::DefaultAzureCredential;
 use url::Url;
 
-use std::env;
 use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let credential = DefaultAzureCredential::default();
-    let response = credential.get_token("https://management.azure.com").await?;
-    let subscription_id = env::var("AZURE_SUBSCRIPTION_ID")?;
+    let response = credential.get_token("https://storage.azure.com/").await?;
     let url = Url::parse(&format!(
-        "https://management.azure.com/subscriptions/{}/providers/Microsoft.Storage/storageAccounts?api-version=2019-06-01",
-        subscription_id))?;
+        "https://bccrcprccatlassa.blob.core.windows.net/atlas?restype=container&comp=list"
+    ))?;
     let response = reqwest::Client::new()
         .get(url)
         .header(
             "Authorization",
             format!("Bearer {}", response.token.secret()),
         )
+        .header("x-ms-version", "2020-04-08")
         .send()
         .await?
         .text()
