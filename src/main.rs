@@ -14,6 +14,23 @@ use std::error::Error;
 use std::io::BufRead;
 use url::Url;
 
+/// Takes a Azure Storage account and container name and returns all the blobs in the container in CSV format
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Storage account container to list blobs
+    #[arg(short, long)]
+    account: String,
+
+    /// Azure Storage account
+    #[arg(short, long)]
+    container: String,
+
+    /// Azure Storage account
+    #[arg(short, long)]
+    output: String,
+}
+
 async fn list_blobs(
     container: &str,
     account: &str,
@@ -118,12 +135,13 @@ struct Row {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let args = Args::parse();
     let credential = DefaultAzureCredential::default();
     let token_res = credential.get_token("https://storage.azure.com/").await?;
     let token = token_res.token.secret();
     let client = reqwest::Client::new();
-    let container = "atlas";
-    let account = "bccrcprccatlassa";
+    let container = "&args.container";
+    let account = "&args.account";
     let mut marker: Option<&str> = None;
     let mut next_marker: String;
     let mut wtr = csvWriter::from_path("blobs.csv")?;
