@@ -1,6 +1,9 @@
 use azure_core::auth::TokenCredential;
 use azure_identity::DefaultAzureCredential;
+use clap::Parser;
+use console::style;
 use csv::Writer as csvWriter;
+use indicatif::{ProgressBar, ProgressStyle};
 use quick_xml::events::BytesStart;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
