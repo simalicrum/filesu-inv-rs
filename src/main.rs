@@ -1,14 +1,14 @@
 use azure_core::auth::TokenCredential;
 use azure_identity::DefaultAzureCredential;
+use csv::Writer as csvWriter;
 use quick_xml::events::BytesStart;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use quick_xml::Writer;
 use serde::{Deserialize, Serialize};
-use serde_xml_rs::{from_str, to_string};
+use serde_xml_rs::from_str;
 use std::error::Error;
 use std::io::BufRead;
-use std::marker;
 use url::Url;
 
 async fn list_blobs(
@@ -100,10 +100,17 @@ struct Blob {
     #[serde(rename = "Properties")]
     properties: Properties,
 }
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
-struct NextMarker {
-    #[serde(rename = "NextMarker")]
-    marker: String,
+
+#[derive(serde::Serialize)]
+struct Row {
+    name: String,
+    creation_time: String,
+    last_modified: String,
+    content_length: String,
+    content_type: String,
+    content_md5: String,
+    blobtype: String,
+    accesstier: String,
 }
 
 #[tokio::main]
@@ -116,14 +123,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let account = "bccrcprccatlassa";
     let mut marker: Option<&str> = None;
     let mut next_marker: String;
+    let mut wtr = csvWriter::from_path("blobs.csv")?;
     'list: loop {
-        // println!("Starting loop");
         let res = list_blobs(container, account, token, marker, &client).await?;
         let mut reader = Reader::from_str(&res);
         reader.trim_text(true);
-        let mut count = 0;
         let mut buf = Vec::new();
-        // let mut txt = Vec::new();
         let mut junk_buf: Vec<u8> = Vec::new();
         loop {
             match reader.read_event_into_async(&mut buf).await {
@@ -134,6 +139,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         let str = std::str::from_utf8(&release_bytes).unwrap();
                         let blob: Blob = from_str(str).unwrap();
                         // println!("{:?}", blob);
+                        wtr.serialize(Row {
+                            name: blob.name,
+                            creation_time: blob.properties.creation_time,
+                            last_modified: blob.properties.last_modified,
+                            content_length: blob.properties.content_length,
+                            content_type: blob.properties.content_type,
+                            content_md5: blob.properties.content_md5,
+                            blobtype: blob.properties.blobtype,
+                            accesstier: blob.properties.accesstier,
+                        })?;
+                        // })
                     }
                     b"NextMarker" => {
                         let release_bytes =
@@ -145,7 +161,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             break 'list;
                         }
                         marker = Some(&next_marker);
-                        // println!("Next marker: {:?}", marker);
                     }
                     _ => (),
                 },

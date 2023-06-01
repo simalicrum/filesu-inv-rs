@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 azure_core = "0.12.0"
 azure_identity = "0.12.0"
+csv = "1.2.2"
 quick-xml = {version = "0.28.2", features = ["async-tokio"]}
 reqwest = "0.11.18"
 serde = "1.0.163"
