@@ -3,6 +3,7 @@ use azure_identity::DefaultAzureCredential;
 use clap::Parser;
 use console::style;
 use csv::Writer as csvWriter;
+use futures::future::select_all;
 use indicatif::MultiProgress;
 use indicatif::{ProgressBar, ProgressStyle};
 use quick_xml::events::BytesStart;
@@ -10,14 +11,11 @@ use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use quick_xml::Writer;
 use serde::{Deserialize, Serialize};
-// use serde_json::Result;
-use futures::future::select_all;
 use serde_xml_rs::from_str;
 use std::error::Error;
+use std::io;
 use std::io::BufRead;
-use std::ops::Deref;
 use std::time::Duration;
-use std::{future, io};
 use url::Url;
 
 /// Takes a Azure Storage account and container name and returns all the blobs in the container in CSV format
@@ -35,6 +33,10 @@ struct Args {
     /// Path prefixed to output CSVs
     #[arg(short, long)]
     prefix: Option<String>,
+
+    /// Number of threads/connections to use
+    #[arg(short, long)]
+    threads: Option<usize>,
 }
 
 async fn list_blobs(
@@ -248,7 +250,6 @@ async fn list_thread(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let mut total_threads: u64 = 0;
     let args = Args::parse();
     print!("Connecting to Azure Storage using Azure Default Credentials..");
     let credential = DefaultAzureCredential::default();
@@ -257,7 +258,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("{}", style("done").green().dim());
     let client = reqwest::Client::new();
     let m = MultiProgress::new();
-
+    let threads;
+    match args.threads {
+        Some(t) => threads = t,
+        None => threads = 1,
+    }
     let prefix;
     match args.prefix {
         Some(p) => prefix = p,
@@ -266,7 +271,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     match (args.container, args.account) {
         (Some(container), Some(account)) => {
             // println!("All here {} {}", container, account);
-            list_thread(&container, &account, &token, &client, &m, &prefix).await;
+            let _ = list_thread(&container, &account, &token, &client, &m, &prefix).await;
         }
         (Some(_), None) | (None, Some(_)) => {
             println!("Please specify both container and account when using args");
@@ -276,14 +281,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let lines = io::stdin().lines();
             let mut fut = Vec::new();
             for line in lines {
-                total_threads += 1;
-                // println!("got a line: {}", line.unwrap());
                 let account_container =
                     serde_json::from_str::<AccountContainer>(&line.unwrap()).unwrap();
-                // println!(
-                //     "All here {} {}",
-                //     account_container.container, account_container.account
-                // );
                 let client = client.clone();
                 let container = account_container.container.to_owned();
                 let account = account_container.account.to_owned();
@@ -295,19 +294,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         list_thread(&container, &account, &token, &client, &m, &prefix).await;
                 });
                 fut.push(t);
-                // println!("# of Threads: {}", fut.len());
-                if fut.len() > 1 {
-                    let (s, index, j) = select_all(&mut fut).await;
+                if fut.len() > threads - 1 {
+                    let (_s, index, _j) = select_all(&mut fut).await;
 
                     fut.remove(index);
-                    total_threads -= 1;
                 }
             }
             for f in fut {
                 f.await?;
             }
         }
-        _ => (),
     }
 
     Ok(())
