@@ -10,8 +10,10 @@ use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use quick_xml::Writer;
 use serde::{Deserialize, Serialize};
+// use serde_json::Result;
 use serde_xml_rs::from_str;
 use std::error::Error;
+use std::io;
 use std::io::BufRead;
 use std::time::Duration;
 use url::Url;
@@ -22,15 +24,15 @@ use url::Url;
 struct Args {
     /// Storage account container to list blobs
     #[arg(short, long)]
-    account: String,
+    account: Option<String>,
 
     /// Azure Storage account
     #[arg(short, long)]
-    container: String,
+    container: Option<String>,
 
-    /// Azure Storage account
+    /// Path prefixed to output CSVs
     #[arg(short, long)]
-    output: String,
+    prefix: Option<String>,
 }
 
 async fn list_blobs(
@@ -115,6 +117,12 @@ struct Properties {
     accesstier: String,
 }
 
+#[derive(Serialize, Deserialize)]
+struct AccountContainer {
+    account: String,
+    container: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 struct Blob {
     #[serde(rename = "Name")]
@@ -141,7 +149,7 @@ async fn list_thread(
     token: &str,
     client: &reqwest::Client,
     m: &MultiProgress,
-    output: &str,
+    prefix: &str,
 ) -> Result<(), Box<dyn Error>> {
     println!("Spawned a thread");
     let pb = m.add(ProgressBar::new_spinner());
@@ -165,13 +173,14 @@ async fn list_thread(
     let mut count: u64 = 0;
     let mut marker: Option<&str> = None;
     let mut next_marker: String;
+    let mut wtr = csvWriter::from_path(prefix.to_owned() + account + "-" + container + ".csv")?;
     'list: loop {
         let res = list_blobs(container, account, token, marker, &client).await?;
         let mut reader = Reader::from_str(&res);
         reader.trim_text(true);
         let mut buf = Vec::new();
         let mut junk_buf: Vec<u8> = Vec::new();
-        let mut wtr = csvWriter::from_path(output)?;
+
         loop {
             match reader.read_event_into_async(&mut buf).await {
                 Ok(Event::Start(e)) => match e.name().as_ref() {
@@ -229,28 +238,51 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let token: &str = token_res.token.secret();
     println!("{}", style("done").green().dim());
     let client = reqwest::Client::new();
-    println!(
-        "Writing blob properties to {}:",
-        style(&args.output).green()
-    );
     let m = MultiProgress::new();
-    let mut fut = Vec::new();
-    for _i in 0..3 {
-        let client = client.clone();
-        // let wtr = wtr;
-        // let pb = pb.clone();
-        let container = args.container.to_owned();
-        let account = args.account.to_owned();
-        let token = token.to_owned();
-        let output = args.output.to_owned();
-        let m = m.clone();
-        let t = tokio::spawn(async move {
-            let _result = list_thread(&container, &account, &token, &client, &m, &output).await;
-        });
-        fut.push(t);
+
+    let prefix;
+    match args.prefix {
+        Some(p) => prefix = p,
+        None => prefix = String::from(""),
     }
-    for f in fut {
-        f.await?;
+    match (args.container, args.account) {
+        (Some(container), Some(account)) => {
+            println!("All here {} {}", container, account);
+            list_thread(&container, &account, &token, &client, &m, &prefix).await;
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            println!("Please specify both container and account when using args");
+            std::process::exit(1);
+        }
+        (None, None) => {
+            let lines = io::stdin().lines();
+            let mut fut = Vec::new();
+            for line in lines {
+                // println!("got a line: {}", line.unwrap());
+                let account_container =
+                    serde_json::from_str::<AccountContainer>(&line.unwrap()).unwrap();
+                println!(
+                    "All here {} {}",
+                    account_container.container, account_container.account
+                );
+                let client = client.clone();
+                let container = account_container.container.to_owned();
+                let account = account_container.account.to_owned();
+                let token = token.to_owned();
+                let prefix = prefix.to_owned();
+                let m = m.clone();
+                let t = tokio::spawn(async move {
+                    let _result =
+                        list_thread(&container, &account, &token, &client, &m, &prefix).await;
+                });
+                fut.push(t);
+            }
+            for f in fut {
+                f.await?;
+            }
+        }
+        _ => (),
     }
+
     Ok(())
 }
