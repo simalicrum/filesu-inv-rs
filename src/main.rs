@@ -134,6 +134,70 @@ struct Row {
     accesstier: String,
 }
 
+async fn list_thread(
+    container: &str,
+    account: &str,
+    token: &str,
+    client: &reqwest::Client,
+    wtr: &mut csvWriter<std::fs::File>,
+    pb: &ProgressBar,
+    mut count: u64,
+) -> Result<(), Box<dyn Error>> {
+    let mut marker: Option<&str> = None;
+    let mut next_marker: String;
+    'list: loop {
+        let res = list_blobs(container, account, token, marker, &client).await?;
+        let mut reader = Reader::from_str(&res);
+        reader.trim_text(true);
+        let mut buf = Vec::new();
+        let mut junk_buf: Vec<u8> = Vec::new();
+        loop {
+            match reader.read_event_into_async(&mut buf).await {
+                Ok(Event::Start(e)) => match e.name().as_ref() {
+                    b"Blob" => {
+                        let release_bytes =
+                            read_to_end_into_buffer(&mut reader, &e, &mut junk_buf).unwrap();
+                        let str = std::str::from_utf8(&release_bytes).unwrap();
+                        let blob: Blob = from_str(str).unwrap();
+                        wtr.serialize(Row {
+                            name: blob.name,
+                            creation_time: blob.properties.creation_time,
+                            last_modified: blob.properties.last_modified,
+                            content_length: blob.properties.content_length,
+                            content_type: blob.properties.content_type,
+                            content_md5: blob.properties.content_md5,
+                            blobtype: blob.properties.blobtype,
+                            accesstier: blob.properties.accesstier,
+                        })?;
+                        count += 1;
+                    }
+                    b"NextMarker" => {
+                        let release_bytes =
+                            read_to_end_into_buffer(&mut reader, &e, &mut junk_buf).unwrap();
+                        let str = std::str::from_utf8(&release_bytes).unwrap();
+                        next_marker = from_str(str).unwrap();
+                        pb.set_message(format!("{} blobs found", count));
+                        marker = Some(&next_marker);
+                    }
+                    b"EnumerationResults" => {
+                        pb.set_message(format!("{} blobs found", count));
+                        marker = None;
+                    }
+                    _ => (),
+                },
+                Err(e) => panic!("Error at position {}: {:?}", reader.buffer_position(), e),
+                Ok(Event::Eof) => break,
+                _ => (),
+            }
+            buf.clear();
+        }
+        if marker.is_none() {
+            break 'list;
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
@@ -157,7 +221,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     pb.set_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")
             .unwrap()
-            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+            .tick_strings(&[
+                "⠋",
+                "⠙",
+                "⠹",
+                "⠸",
+                "⠼",
+                "⠴",
+                "⠦",
+                "⠧",
+                "⠇",
+                "⠏",
+                &style("✔").green().to_string(),
+            ]),
     );
     let mut count: u32 = 0;
     'list: loop {
@@ -207,9 +283,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             buf.clear();
         }
         if marker.is_none() {
-            pb.finish_with_message(format!("{} blobs found", count));
             break 'list;
         }
     }
+    pb.finish_with_message(format!("{} blobs found", count));
     Ok(())
 }
