@@ -155,7 +155,6 @@ async fn list_thread(
     m: &MultiProgress,
     prefix: &str,
 ) -> Result<(), Box<dyn Error>> {
-    // println!("Spawned a thread");
     let pb = m.add(ProgressBar::new_spinner());
     pb.enable_steady_tick(Duration::from_millis(120));
     let sty = ProgressStyle::with_template("{spinner:.blue} {msg}")
@@ -270,7 +269,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     match (args.container, args.account) {
         (Some(container), Some(account)) => {
-            // println!("All here {} {}", container, account);
             let _ = list_thread(&container, &account, &token, &client, &m, &prefix).await;
         }
         (Some(_), None) | (None, Some(_)) => {
@@ -296,7 +294,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 fut.push(t);
                 if fut.len() > threads - 1 {
                     let (_s, index, _j) = select_all(&mut fut).await;
-
                     fut.remove(index);
                 }
             }
@@ -305,6 +302,5 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
-
     Ok(())
 }
