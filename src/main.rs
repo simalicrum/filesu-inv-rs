@@ -139,10 +139,11 @@ async fn list_thread(
     account: &str,
     token: &str,
     client: &reqwest::Client,
-    wtr: &mut csvWriter<std::fs::File>,
     pb: &ProgressBar,
-    mut count: u64,
+    output: &str,
 ) -> Result<(), Box<dyn Error>> {
+    println!("Spawned a thread");
+    let mut count: u64 = 0;
     let mut marker: Option<&str> = None;
     let mut next_marker: String;
     'list: loop {
@@ -151,6 +152,7 @@ async fn list_thread(
         reader.trim_text(true);
         let mut buf = Vec::new();
         let mut junk_buf: Vec<u8> = Vec::new();
+        let mut wtr = csvWriter::from_path(output)?;
         loop {
             match reader.read_event_into_async(&mut buf).await {
                 Ok(Event::Start(e)) => match e.name().as_ref() {
@@ -195,6 +197,7 @@ async fn list_thread(
             break 'list;
         }
     }
+    pb.finish_with_message(format!("{} blobs found", count));
     Ok(())
 }
 
@@ -204,14 +207,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     print!("Connecting to Azure Storage using Azure Default Credentials..");
     let credential = DefaultAzureCredential::default();
     let token_res = credential.get_token("https://storage.azure.com/").await?;
-    let token = token_res.token.secret();
+    let token: &str = token_res.token.secret();
     println!("{}", style("done").green().dim());
     let client = reqwest::Client::new();
-    let container = &args.container;
-    let account = &args.account;
-    // let mut marker: Option<&str> = None;
-    // let mut next_marker: String;
-    let mut wtr = csvWriter::from_path(&args.output)?;
     println!(
         "Writing blob properties to {}:",
         style(&args.output).green()
@@ -235,8 +233,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 &style("✔").green().to_string(),
             ]),
     );
-    let mut count: u64 = 0;
-    list_thread(container, account, token, &client, &mut wtr, &pb, count).await?;
-    pb.finish_with_message(format!("{} blobs found", count));
+    let mut fut = Vec::new();
+    for _i in 0..3 {
+        let client = client.clone();
+        // let wtr = wtr;
+        let pb = pb.clone();
+        let container = args.container.to_owned();
+        let account = args.account.to_owned();
+        let token = token.to_owned();
+        let output = args.output.to_owned();
+        let t = tokio::spawn(async move {
+            let _result = list_thread(&container, &account, &token, &client, &pb, &output).await;
+        });
+        fut.push(t);
+    }
+    for f in fut {
+        f.await?;
+    }
     Ok(())
 }
