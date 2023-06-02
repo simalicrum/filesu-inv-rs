@@ -3,6 +3,7 @@ use azure_identity::DefaultAzureCredential;
 use clap::Parser;
 use console::style;
 use csv::Writer as csvWriter;
+use indicatif::MultiProgress;
 use indicatif::{ProgressBar, ProgressStyle};
 use quick_xml::events::BytesStart;
 use quick_xml::events::Event;
@@ -139,10 +140,28 @@ async fn list_thread(
     account: &str,
     token: &str,
     client: &reqwest::Client,
-    pb: &ProgressBar,
+    m: &MultiProgress,
     output: &str,
 ) -> Result<(), Box<dyn Error>> {
     println!("Spawned a thread");
+    let pb = m.add(ProgressBar::new_spinner());
+    pb.enable_steady_tick(Duration::from_millis(120));
+    let sty = ProgressStyle::with_template("{spinner:.blue} {msg}")
+        .unwrap()
+        .tick_strings(&[
+            "⠋",
+            "⠙",
+            "⠹",
+            "⠸",
+            "⠼",
+            "⠴",
+            "⠦",
+            "⠧",
+            "⠇",
+            "⠏",
+            &style("✔").green().to_string(),
+        ]);
+    pb.set_style(sty);
     let mut count: u64 = 0;
     let mut marker: Option<&str> = None;
     let mut next_marker: String;
@@ -214,36 +233,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "Writing blob properties to {}:",
         style(&args.output).green()
     );
-    let pb = ProgressBar::new_spinner();
-    pb.enable_steady_tick(Duration::from_millis(120));
-    pb.set_style(
-        ProgressStyle::with_template("{spinner:.blue} {msg}")
-            .unwrap()
-            .tick_strings(&[
-                "⠋",
-                "⠙",
-                "⠹",
-                "⠸",
-                "⠼",
-                "⠴",
-                "⠦",
-                "⠧",
-                "⠇",
-                "⠏",
-                &style("✔").green().to_string(),
-            ]),
-    );
+    let m = MultiProgress::new();
     let mut fut = Vec::new();
     for _i in 0..3 {
         let client = client.clone();
         // let wtr = wtr;
-        let pb = pb.clone();
+        // let pb = pb.clone();
         let container = args.container.to_owned();
         let account = args.account.to_owned();
         let token = token.to_owned();
         let output = args.output.to_owned();
+        let m = m.clone();
         let t = tokio::spawn(async move {
-            let _result = list_thread(&container, &account, &token, &client, &pb, &output).await;
+            let _result = list_thread(&container, &account, &token, &client, &m, &output).await;
         });
         fut.push(t);
     }
