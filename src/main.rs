@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_xml_rs::from_str;
 use std::error::Error;
 use std::io::BufRead;
+use std::time::Duration;
 use url::Url;
 
 /// Takes a Azure Storage account and container name and returns all the blobs in the container in CSV format
@@ -136,15 +137,29 @@ struct Row {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
+    print!("Connecting to Azure Storage using Azure Default Credentials..");
     let credential = DefaultAzureCredential::default();
     let token_res = credential.get_token("https://storage.azure.com/").await?;
     let token = token_res.token.secret();
+    println!("{}", style("done").green().dim());
     let client = reqwest::Client::new();
-    let container = "&args.container";
-    let account = "&args.account";
+    let container = &args.container;
+    let account = &args.account;
     let mut marker: Option<&str> = None;
     let mut next_marker: String;
-    let mut wtr = csvWriter::from_path("blobs.csv")?;
+    let mut wtr = csvWriter::from_path(&args.output)?;
+    println!(
+        "Writing blob properties to {}:",
+        style(&args.output).green()
+    );
+    let pb = ProgressBar::new_spinner();
+    pb.enable_steady_tick(Duration::from_millis(120));
+    pb.set_style(
+        ProgressStyle::with_template("{spinner:.blue} {msg}")
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+    );
+    let mut count: u32 = 0;
     'list: loop {
         let res = list_blobs(container, account, token, marker, &client).await?;
         let mut reader = Reader::from_str(&res);
@@ -159,7 +174,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             read_to_end_into_buffer(&mut reader, &e, &mut junk_buf).unwrap();
                         let str = std::str::from_utf8(&release_bytes).unwrap();
                         let blob: Blob = from_str(str).unwrap();
-                        // println!("{:?}", blob);
                         wtr.serialize(Row {
                             name: blob.name,
                             creation_time: blob.properties.creation_time,
@@ -170,18 +184,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             blobtype: blob.properties.blobtype,
                             accesstier: blob.properties.accesstier,
                         })?;
-                        // })
+                        count += 1;
                     }
                     b"NextMarker" => {
                         let release_bytes =
                             read_to_end_into_buffer(&mut reader, &e, &mut junk_buf).unwrap();
                         let str = std::str::from_utf8(&release_bytes).unwrap();
                         next_marker = from_str(str).unwrap();
-                        if next_marker.is_empty() {
-                            println!("No more markers");
-                            break 'list;
-                        }
+                        pb.set_message(format!("{} blobs found", count));
                         marker = Some(&next_marker);
+                    }
+                    b"EnumerationResults" => {
+                        pb.set_message(format!("{} blobs found", count));
+                        marker = None;
                     }
                     _ => (),
                 },
@@ -191,7 +206,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
             buf.clear();
         }
+        if marker.is_none() {
+            pb.finish_with_message(format!("{} blobs found", count));
+            break 'list;
+        }
     }
-
     Ok(())
 }
