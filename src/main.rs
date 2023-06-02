@@ -11,11 +11,13 @@ use quick_xml::reader::Reader;
 use quick_xml::Writer;
 use serde::{Deserialize, Serialize};
 // use serde_json::Result;
+use futures::future::select_all;
 use serde_xml_rs::from_str;
 use std::error::Error;
-use std::io;
 use std::io::BufRead;
+use std::ops::Deref;
 use std::time::Duration;
+use std::{future, io};
 use url::Url;
 
 /// Takes a Azure Storage account and container name and returns all the blobs in the container in CSV format
@@ -151,7 +153,7 @@ async fn list_thread(
     m: &MultiProgress,
     prefix: &str,
 ) -> Result<(), Box<dyn Error>> {
-    println!("Spawned a thread");
+    // println!("Spawned a thread");
     let pb = m.add(ProgressBar::new_spinner());
     pb.enable_steady_tick(Duration::from_millis(120));
     let sty = ProgressStyle::with_template("{spinner:.blue} {msg}")
@@ -206,11 +208,21 @@ async fn list_thread(
                             read_to_end_into_buffer(&mut reader, &e, &mut junk_buf).unwrap();
                         let str = std::str::from_utf8(&release_bytes).unwrap();
                         next_marker = from_str(str).unwrap();
-                        pb.set_message(format!("{} blobs found", count));
+                        pb.set_message(format!(
+                            "{} blobs found in account {} container {}",
+                            count,
+                            style(account).green(),
+                            style(container).green()
+                        ));
                         marker = Some(&next_marker);
                     }
                     b"EnumerationResults" => {
-                        pb.set_message(format!("{} blobs found", count));
+                        pb.set_message(format!(
+                            "{} blobs found in account {} container {}",
+                            count,
+                            style(account).green(),
+                            style(container).green()
+                        ));
                         marker = None;
                     }
                     _ => (),
@@ -225,12 +237,18 @@ async fn list_thread(
             break 'list;
         }
     }
-    pb.finish_with_message(format!("{} blobs found", count));
+    pb.finish_with_message(format!(
+        "{} blobs found in account {} container {}",
+        count,
+        style(account).green(),
+        style(container).green()
+    ));
     Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let mut total_threads: u64 = 0;
     let args = Args::parse();
     print!("Connecting to Azure Storage using Azure Default Credentials..");
     let credential = DefaultAzureCredential::default();
@@ -247,7 +265,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     match (args.container, args.account) {
         (Some(container), Some(account)) => {
-            println!("All here {} {}", container, account);
+            // println!("All here {} {}", container, account);
             list_thread(&container, &account, &token, &client, &m, &prefix).await;
         }
         (Some(_), None) | (None, Some(_)) => {
@@ -258,13 +276,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let lines = io::stdin().lines();
             let mut fut = Vec::new();
             for line in lines {
+                total_threads += 1;
                 // println!("got a line: {}", line.unwrap());
                 let account_container =
                     serde_json::from_str::<AccountContainer>(&line.unwrap()).unwrap();
-                println!(
-                    "All here {} {}",
-                    account_container.container, account_container.account
-                );
+                // println!(
+                //     "All here {} {}",
+                //     account_container.container, account_container.account
+                // );
                 let client = client.clone();
                 let container = account_container.container.to_owned();
                 let account = account_container.account.to_owned();
@@ -276,6 +295,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         list_thread(&container, &account, &token, &client, &m, &prefix).await;
                 });
                 fut.push(t);
+                // println!("# of Threads: {}", fut.len());
+                if fut.len() > 1 {
+                    let (s, index, j) = select_all(&mut fut).await;
+
+                    fut.remove(index);
+                    total_threads -= 1;
+                }
             }
             for f in fut {
                 f.await?;

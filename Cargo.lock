@@ -438,6 +438,7 @@ dependencies = [
  "console",
  "csv",
  "dotenv",
+ "futures",
  "indicatif",
  "quick-xml",
  "reqwest",
