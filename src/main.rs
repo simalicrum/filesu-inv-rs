@@ -1,4 +1,5 @@
 use azure_core::auth::TokenCredential;
+use azure_core::error;
 use azure_identity::DefaultAzureCredential;
 use clap::Parser;
 use console::style;
@@ -66,10 +67,15 @@ async fn list_blobs(
         .header("Authorization", format!("Bearer {}", token))
         .header("x-ms-version", "2020-04-08")
         .send()
-        .await?
-        .text()
-        .await?;
-    Ok(res)
+        .await;
+    match res {
+        Ok(r) => {
+            let body = r.text().await?;
+            // println!("body: {}", body);
+            Ok(body)
+        }
+        Err(e) => Err(Box::new(e)),
+    }
 }
 
 fn read_to_end_into_buffer<R: BufRead>(
@@ -147,6 +153,14 @@ struct Row {
     accesstier: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+struct ResponseError {
+    #[serde(rename = "Code")]
+    code: String,
+    #[serde(rename = "Message")]
+    message: String,
+}
+
 async fn list_thread(
     container: &str,
     account: &str,
@@ -187,6 +201,20 @@ async fn list_thread(
         loop {
             match reader.read_event_into_async(&mut buf).await {
                 Ok(Event::Start(e)) => match e.name().as_ref() {
+                    b"Error" => {
+                        let release_bytes =
+                            read_to_end_into_buffer(&mut reader, &e, &mut junk_buf).unwrap();
+                        let str = std::str::from_utf8(&release_bytes).unwrap();
+                        // println!("Error: {}", str);
+                        let error_msg: ResponseError = from_str(str).unwrap();
+                        pb.abandon_with_message(format!(
+                            "Error listing account {} container {}. Error: {}",
+                            style(account).green(),
+                            style(container).green(),
+                            error_msg.code
+                        ));
+                        break 'list;
+                    }
                     b"Blob" => {
                         let release_bytes =
                             read_to_end_into_buffer(&mut reader, &e, &mut junk_buf).unwrap();
@@ -238,12 +266,12 @@ async fn list_thread(
             break 'list;
         }
     }
-    pb.finish_with_message(format!(
-        "{} blobs found in account {} container {}",
-        count,
-        style(account).green(),
-        style(container).green()
-    ));
+    // pb.finish_with_message(format!(
+    //     "{} blobs found in account {} container {}",
+    //     count,
+    //     style(account).green(),
+    //     style(container).green()
+    // ));
     Ok(())
 }
 
