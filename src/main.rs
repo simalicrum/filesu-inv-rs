@@ -112,19 +112,21 @@ fn read_to_end_into_buffer<R: BufRead>(
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 struct Properties {
     #[serde(rename = "Creation-Time")]
-    creation_time: String,
+    creationtime: String,
     #[serde(rename = "Last-Modified")]
-    last_modified: String,
+    lastmodified: String,
     #[serde(rename = "Content-Length")]
-    content_length: String,
+    contentlength: String,
     #[serde(rename = "Content-Type")]
-    content_type: String,
+    contenttype: String,
     #[serde(rename = "Content-MD5")]
-    content_md5: String,
+    contentmd5: String,
     #[serde(rename = "BlobType")]
     blobtype: String,
     #[serde(rename = "AccessTier", default = "String::new")]
     accesstier: String,
+    #[serde(rename = "ResourceType")]
+    resourcetype: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -144,13 +146,14 @@ struct Blob {
 #[derive(serde::Serialize)]
 struct Row {
     name: String,
-    creation_time: String,
-    last_modified: String,
-    content_length: String,
-    content_type: String,
-    content_md5: String,
+    creationtime: String,
+    lastmodified: String,
+    contentlength: String,
+    contenttype: String,
+    contentmd5: String,
     blobtype: String,
     accesstier: String,
+    resourcetype: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -223,13 +226,14 @@ async fn list_thread(
                         let blob: Blob = from_str(str).unwrap();
                         wtr.serialize(Row {
                             name: blob.name,
-                            creation_time: blob.properties.creation_time,
-                            last_modified: blob.properties.last_modified,
-                            content_length: blob.properties.content_length,
-                            content_type: blob.properties.content_type,
-                            content_md5: blob.properties.content_md5,
+                            creationtime: blob.properties.creationtime,
+                            lastmodified: blob.properties.lastmodified,
+                            contentlength: blob.properties.contentlength,
+                            contenttype: blob.properties.contenttype,
+                            contentmd5: blob.properties.contentmd5,
                             blobtype: blob.properties.blobtype,
                             accesstier: blob.properties.accesstier,
+                            resourcetype: blob.properties.resourcetype,
                         })?;
                         count += 1;
                     }
