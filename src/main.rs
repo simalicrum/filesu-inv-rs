@@ -125,7 +125,7 @@ struct Properties {
     blobtype: String,
     #[serde(rename = "AccessTier", default = "String::new")]
     accesstier: String,
-    #[serde(rename = "ResourceType")]
+    #[serde(rename = "ResourceType", default = "String::new")]
     resourcetype: String,
 }
 
