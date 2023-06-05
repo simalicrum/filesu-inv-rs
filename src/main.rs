@@ -1,5 +1,4 @@
 use azure_core::auth::TokenCredential;
-use azure_core::error;
 use azure_identity::DefaultAzureCredential;
 use clap::Parser;
 use console::style;
@@ -16,6 +15,7 @@ use serde_xml_rs::from_str;
 use std::error::Error;
 use std::io;
 use std::io::BufRead;
+use std::thread;
 use std::time::Duration;
 use url::Url;
 
@@ -123,7 +123,7 @@ struct Properties {
     content_md5: String,
     #[serde(rename = "BlobType")]
     blobtype: String,
-    #[serde(rename = "AccessTier")]
+    #[serde(rename = "AccessTier", default = "String::new")]
     accesstier: String,
 }
 
@@ -205,15 +205,16 @@ async fn list_thread(
                         let release_bytes =
                             read_to_end_into_buffer(&mut reader, &e, &mut junk_buf).unwrap();
                         let str = std::str::from_utf8(&release_bytes).unwrap();
-                        // println!("Error: {}", str);
+
                         let error_msg: ResponseError = from_str(str).unwrap();
-                        pb.abandon_with_message(format!(
-                            "Error listing account {} container {}. Error: {}",
+                        pb.set_message(format!(
+                            "Error listing account {} container {}. Code: {}",
                             style(account).green(),
                             style(container).green(),
-                            error_msg.code
+                            style(error_msg.code).red()
                         ));
-                        break 'list;
+                        thread::sleep(Duration::from_millis(1000));
+                        pb.finish_and_clear();
                     }
                     b"Blob" => {
                         let release_bytes =
@@ -266,12 +267,15 @@ async fn list_thread(
             break 'list;
         }
     }
-    // pb.finish_with_message(format!(
-    //     "{} blobs found in account {} container {}",
-    //     count,
-    //     style(account).green(),
-    //     style(container).green()
-    // ));
+    if count == 0 {
+        pb.set_message(format!(
+            "No blobs found in account {} container {}",
+            style(account).green(),
+            style(container).green()
+        ));
+        thread::sleep(Duration::from_millis(200));
+    }
+    pb.finish_and_clear();
     Ok(())
 }
 
