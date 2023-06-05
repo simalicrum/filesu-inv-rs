@@ -109,6 +109,10 @@ fn read_to_end_into_buffer<R: BufRead>(
     }
 }
 
+fn access_tier_default() -> String {
+    "None".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 struct Properties {
     #[serde(rename = "Creation-Time")]
@@ -123,7 +127,7 @@ struct Properties {
     contentmd5: String,
     #[serde(rename = "BlobType")]
     blobtype: String,
-    #[serde(rename = "AccessTier", default = "String::new")]
+    #[serde(rename = "AccessTier", default = "access_tier_default")]
     accesstier: String,
     #[serde(rename = "ResourceType", default = "String::new")]
     resourcetype: String,
