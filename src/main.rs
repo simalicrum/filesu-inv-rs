@@ -198,13 +198,22 @@ async fn list_thread(
     let mut marker: Option<&str> = None;
     let mut next_marker: String;
     let mut wtr = csvWriter::from_path(prefix.to_owned() + account + "-" + container + ".csv")?;
+    ket mut retries = 0;
     'list: loop {
-        let res = list_blobs(container, account, token, marker, &client).await?;
+        'retry: loop {
+            let result = list_blobs(container, account, token, marker, &client).await;
+            match result {
+                Ok(res) => {
+
+                }
+                Err
+            }
+        }
+
         let mut reader = Reader::from_str(&res);
         reader.trim_text(true);
         let mut buf = Vec::new();
         let mut junk_buf: Vec<u8> = Vec::new();
-
         loop {
             match reader.read_event_into_async(&mut buf).await {
                 Ok(Event::Start(e)) => match e.name().as_ref() {
@@ -221,7 +230,10 @@ async fn list_thread(
                             style(error_msg.code).red()
                         ));
                         thread::sleep(Duration::from_millis(1000));
-                        pb.finish_and_clear();
+                        panic!(
+                            "Error listing account {} container {}: {:?}",
+                            account, container, e
+                        )
                     }
                     b"Blob" => {
                         let release_bytes =
@@ -330,6 +342,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 let t = tokio::spawn(async move {
                     let _result =
                         list_thread(&container, &account, &token, &client, &m, &prefix).await;
+                    match _result {
+                        Ok(_) => (),
+                        Err(e) => {
+                            println!(
+                                "Error listing account {} container {}: {}",
+                                account, container, e
+                            );
+                        }
+                    }
                 });
                 fut.push(t);
                 if fut.len() > threads - 1 {
