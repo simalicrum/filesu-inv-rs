@@ -198,17 +198,9 @@ async fn list_thread(
     let mut marker: Option<&str> = None;
     let mut next_marker: String;
     let mut wtr = csvWriter::from_path(prefix.to_owned() + account + "-" + container + ".csv")?;
-    ket mut retries = 0;
+    let mut retries = 0;
     'list: loop {
-        'retry: loop {
-            let result = list_blobs(container, account, token, marker, &client).await;
-            match result {
-                Ok(res) => {
-
-                }
-                Err
-            }
-        }
+        let res = list_blobs(container, account, token, marker, &client).await?;
 
         let mut reader = Reader::from_str(&res);
         reader.trim_text(true);
