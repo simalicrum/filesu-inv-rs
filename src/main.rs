@@ -43,10 +43,12 @@ struct Args {
 async fn list_blobs(
     container: &str,
     account: &str,
-    token: &str,
     marker: Option<&str>,
     client: &reqwest::Client,
 ) -> Result<String, Box<dyn Error>> {
+    let credential = DefaultAzureCredential::default();
+    let token_res = credential.get_token("https://storage.azure.com/").await?;
+    let token: &str = token_res.token.secret();
     let url;
     match marker {
         None => {
@@ -170,7 +172,6 @@ struct ResponseError {
 async fn list_thread(
     container: &str,
     account: &str,
-    token: &str,
     client: &reqwest::Client,
     m: &MultiProgress,
     prefix: &str,
@@ -201,7 +202,7 @@ async fn list_thread(
     'list: loop {
         let res;
         loop {
-            let result = list_blobs(container, account, token, marker, &client).await;
+            let result = list_blobs(container, account, marker, &client).await;
             let mut retries = 0;
             match result {
                 Ok(r) => {
@@ -312,11 +313,6 @@ async fn list_thread(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
-    print!("Connecting to Azure Storage using Azure Default Credentials..");
-    let credential = DefaultAzureCredential::default();
-    let token_res = credential.get_token("https://storage.azure.com/").await?;
-    let token: &str = token_res.token.secret();
-    println!("{}", style("done").green().dim());
     let client = reqwest::Client::new();
     let m = MultiProgress::new();
     let threads;
@@ -331,7 +327,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     match (args.container, args.account) {
         (Some(container), Some(account)) => {
-            let _ = list_thread(&container, &account, &token, &client, &m, &prefix).await;
+            let _ = list_thread(&container, &account, &client, &m, &prefix).await;
         }
         (Some(_), None) | (None, Some(_)) => {
             println!("Please specify both container and account when using args");
@@ -346,12 +342,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 let client = client.clone();
                 let container = account_container.container.to_owned();
                 let account = account_container.account.to_owned();
-                let token = token.to_owned();
                 let prefix = prefix.to_owned();
                 let m = m.clone();
                 let t = tokio::spawn(async move {
-                    let _result =
-                        list_thread(&container, &account, &token, &client, &m, &prefix).await;
+                    let _result = list_thread(&container, &account, &client, &m, &prefix).await;
                     match _result {
                         Ok(_) => (),
                         Err(e) => {
