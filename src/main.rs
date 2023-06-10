@@ -71,7 +71,6 @@ async fn list_blobs(
     match res {
         Ok(r) => {
             let body = r.text().await?;
-            // println!("body: {}", body);
             Ok(body)
         }
         Err(e) => Err(Box::new(e)),
@@ -198,77 +197,96 @@ async fn list_thread(
     let mut marker: Option<&str> = None;
     let mut next_marker: String;
     let mut wtr = csvWriter::from_path(prefix.to_owned() + account + "-" + container + ".csv")?;
-    let mut retries = 0;
+    let mut xml_errors = 0;
     'list: loop {
-        let res = list_blobs(container, account, token, marker, &client).await?;
-
+        let res;
+        loop {
+            let result = list_blobs(container, account, token, marker, &client).await;
+            let mut retries = 0;
+            match result {
+                Ok(r) => {
+                    res = r;
+                    break;
+                }
+                Err(_e) => {
+                    retries += 1;
+                    if retries > 5 {
+                        panic!("Too many retries on list blob fetch")
+                    }
+                    thread::sleep(Duration::from_millis(1000));
+                }
+            }
+        }
         let mut reader = Reader::from_str(&res);
         reader.trim_text(true);
         let mut buf = Vec::new();
         let mut junk_buf: Vec<u8> = Vec::new();
         loop {
             match reader.read_event_into_async(&mut buf).await {
-                Ok(Event::Start(e)) => match e.name().as_ref() {
-                    b"Error" => {
-                        let release_bytes =
-                            read_to_end_into_buffer(&mut reader, &e, &mut junk_buf).unwrap();
-                        let str = std::str::from_utf8(&release_bytes).unwrap();
+                Ok(Event::Start(e)) => {
+                    match e.name().as_ref() {
+                        b"Error" => {
+                            let release_bytes =
+                                read_to_end_into_buffer(&mut reader, &e, &mut junk_buf).unwrap();
+                            let str = std::str::from_utf8(&release_bytes).unwrap();
 
-                        let error_msg: ResponseError = from_str(str).unwrap();
-                        pb.set_message(format!(
-                            "Error listing account {} container {}. Code: {}",
-                            style(account).green(),
-                            style(container).green(),
-                            style(error_msg.code).red()
-                        ));
-                        thread::sleep(Duration::from_millis(1000));
-                        panic!(
-                            "Error listing account {} container {}: {:?}",
-                            account, container, e
-                        )
+                            let error_msg: ResponseError = from_str(str).unwrap();
+                            pb.set_message(format!(
+                                "Error listing account {} container {}. Code: {}",
+                                style(account).green(),
+                                style(container).green(),
+                                style(&error_msg.code).red()
+                            ));
+                            thread::sleep(Duration::from_millis(1000));
+                            if xml_errors > 10 {
+                                panic!("Too many xml errors on account {} container {}, last error: {}", account, container, error_msg.code);
+                            }
+                            xml_errors += 1;
+                            continue 'list;
+                        }
+                        b"Blob" => {
+                            let release_bytes =
+                                read_to_end_into_buffer(&mut reader, &e, &mut junk_buf).unwrap();
+                            let str = std::str::from_utf8(&release_bytes).unwrap();
+                            let blob: Blob = from_str(str).unwrap();
+                            wtr.serialize(Row {
+                                name: blob.name,
+                                creationtime: blob.properties.creationtime,
+                                lastmodified: blob.properties.lastmodified,
+                                contentlength: blob.properties.contentlength,
+                                contenttype: blob.properties.contenttype,
+                                contentmd5: blob.properties.contentmd5,
+                                blobtype: blob.properties.blobtype,
+                                accesstier: blob.properties.accesstier,
+                                resourcetype: blob.properties.resourcetype,
+                            })?;
+                            count += 1;
+                        }
+                        b"NextMarker" => {
+                            let release_bytes =
+                                read_to_end_into_buffer(&mut reader, &e, &mut junk_buf).unwrap();
+                            let str = std::str::from_utf8(&release_bytes).unwrap();
+                            next_marker = from_str(str).unwrap();
+                            pb.set_message(format!(
+                                "{} blobs found in account {} container {}",
+                                count,
+                                style(account).green(),
+                                style(container).green()
+                            ));
+                            marker = Some(&next_marker);
+                        }
+                        b"EnumerationResults" => {
+                            pb.set_message(format!(
+                                "{} blobs found in account {} container {}",
+                                count,
+                                style(account).green(),
+                                style(container).green()
+                            ));
+                            marker = None;
+                        }
+                        _ => (),
                     }
-                    b"Blob" => {
-                        let release_bytes =
-                            read_to_end_into_buffer(&mut reader, &e, &mut junk_buf).unwrap();
-                        let str = std::str::from_utf8(&release_bytes).unwrap();
-                        let blob: Blob = from_str(str).unwrap();
-                        wtr.serialize(Row {
-                            name: blob.name,
-                            creationtime: blob.properties.creationtime,
-                            lastmodified: blob.properties.lastmodified,
-                            contentlength: blob.properties.contentlength,
-                            contenttype: blob.properties.contenttype,
-                            contentmd5: blob.properties.contentmd5,
-                            blobtype: blob.properties.blobtype,
-                            accesstier: blob.properties.accesstier,
-                            resourcetype: blob.properties.resourcetype,
-                        })?;
-                        count += 1;
-                    }
-                    b"NextMarker" => {
-                        let release_bytes =
-                            read_to_end_into_buffer(&mut reader, &e, &mut junk_buf).unwrap();
-                        let str = std::str::from_utf8(&release_bytes).unwrap();
-                        next_marker = from_str(str).unwrap();
-                        pb.set_message(format!(
-                            "{} blobs found in account {} container {}",
-                            count,
-                            style(account).green(),
-                            style(container).green()
-                        ));
-                        marker = Some(&next_marker);
-                    }
-                    b"EnumerationResults" => {
-                        pb.set_message(format!(
-                            "{} blobs found in account {} container {}",
-                            count,
-                            style(account).green(),
-                            style(container).green()
-                        ));
-                        marker = None;
-                    }
-                    _ => (),
-                },
+                }
                 Err(e) => panic!("Error at position {}: {:?}", reader.buffer_position(), e),
                 Ok(Event::Eof) => break,
                 _ => (),
